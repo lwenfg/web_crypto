@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔐 Secure Message Protocol v2.0</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="matrix-bg" id="matrix"></div>
+    
+    <div class="container">
+        <header class="terminal-header">
+            <div class="terminal-buttons">
+                <span class="btn-close"></span>
+                <span class="btn-minimize"></span>
+                <span class="btn-maximize"></span>
+            </div>
+            <span class="terminal-title">secure_msg_protocol_v2.0.exe</span>
+        </header>
+
+        <div class="terminal-body">
+            <div class="ascii-art">
+╔═══════════════════════════════════════════════════════════════╗
+║  ███████╗███████╗ ██████╗██╗   ██╗██████╗ ███████╗            ║
+║  ██╔════╝██╔════╝██╔════╝██║   ██║██╔══██╗██╔════╝            ║
+║  ███████╗█████╗  ██║     ██║   ██║██████╔╝█████╗              ║
+║  ╚════██║██╔══╝  ██║     ██║   ██║██╔══██╗██╔══╝              ║
+║  ███████║███████╗╚██████╗╚██████╔╝██║  ██║███████╗            ║
+║  ╚══════╝╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝            ║
+║           MESSAGE TRANSMISSION PROTOCOL                       ║
+║                    [ CLASSIFIED ]                             ║
+╚═══════════════════════════════════════════════════════════════╝
+            </div>
+
+            <!-- 模式选择 -->
+            <div class="mode-selector" id="modeSelector">
+                <h2 class="mode-title">> SELECT OPERATION MODE</h2>
+                <div class="mode-buttons">
+                    <button class="mode-btn" id="encryptMode">
+                        <span class="mode-icon">🔒</span>
+                        <span class="mode-text">ENCRYPT</span>
+                        <span class="mode-desc">Encrypt & Transmit Message</span>
+                    </button>
+                    <button class="mode-btn" id="decryptMode">
+                        <span class="mode-icon">🔓</span>
+                        <span class="mode-text">DECRYPT</span>
+                        <span class="mode-desc">Decrypt Received Message</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 加密模式输入 -->
+            <div class="input-section" id="encryptSection" style="display: none;">
+                <h3 class="section-title">> SECURE MESSAGE ENCRYPTION</h3>
+                <div class="input-group">
+                    <label>> SENDER_ID:</label>
+                    <input type="text" id="sender" placeholder="Enter sender identifier..." class="terminal-input">
+                </div>
+                <div class="input-group">
+                    <label>> RECIPIENT_ID:</label>
+                    <input type="text" id="receiver" placeholder="Enter recipient identifier..." class="terminal-input">
+                </div>
+                <div class="input-group">
+                    <label>> MESSAGE_PAYLOAD:</label>
+                    <textarea id="message" placeholder="Enter classified message content..." class="terminal-input"></textarea>
+                </div>
+                <button id="startEncrypt" class="hack-btn">
+                    <span class="btn-text">[ INITIATE ENCRYPTION PROTOCOL ]</span>
+                </button>
+            </div>
+
+            <!-- 解密模式输入 -->
+            <div class="input-section" id="decryptSection" style="display: none;">
+                <h3 class="section-title">> SECURE MESSAGE DECRYPTION</h3>
+                <div class="input-group">
+                    <label>> ENCRYPTED_PAYLOAD:</label>
+                    <textarea id="encryptedData" placeholder="Paste encrypted data packet..." class="terminal-input" style="min-height: 120px;"></textarea>
+                </div>
+                <div class="input-group">
+                    <label>> DECRYPTION_KEY:</label>
+                    <input type="text" id="secretKey" placeholder="Enter decryption key..." class="terminal-input">
+                </div>
+                <button id="startDecrypt" class="hack-btn">
+                    <span class="btn-text">[ INITIATE DECRYPTION PROTOCOL ]</span>
+                </button>
+            </div>
+
+            <!-- 协议步骤展示 -->
+            <div class="protocol-steps" id="steps">
+                <div class="step" id="step1">
+                    <div class="step-header">
+                        <span class="step-icon">🔑</span>
+                        <span class="step-title">阶段 1: 身份认证 (Identity Authentication)</span>
+                        <span class="step-status" id="status1">[ PENDING ]</span>
+                    </div>
+                    <div class="step-content" id="content1"></div>
+                </div>
+
+                <div class="step" id="step2">
+                    <div class="step-header">
+                        <span class="step-icon">🔄</span>
+                        <span class="step-title">阶段 2: 密钥协商 (Diffie-Hellman Key Exchange)</span>
+                        <span class="step-status" id="status2">[ PENDING ]</span>
+                    </div>
+                    <div class="step-content" id="content2"></div>
+                </div>
+
+                <div class="step" id="step3">
+                    <div class="step-header">
+                        <span class="step-icon">📄</span>
+                        <span class="step-title">阶段 3: 消息处理 (Message Processing)</span>
+                        <span class="step-status" id="status3">[ PENDING ]</span>
+                    </div>
+                    <div class="step-content" id="content3"></div>
+                </div>
+
+                <div class="step" id="step4">
+                    <div class="step-header">
+                        <span class="step-icon">✍️</span>
+                        <span class="step-title">阶段 4: 数字签名 (RSA Digital Signature)</span>
+                        <span class="step-status" id="status4">[ PENDING ]</span>
+                    </div>
+                    <div class="step-content" id="content4"></div>
+                </div>
+
+                <div class="step" id="step5">
+                    <div class="step-header">
+                        <span class="step-icon">🔐</span>
+                        <span class="step-title">阶段 5: <span id="step5Title">消息加密 (AES-256-GCM)</span></span>
+                        <span class="step-status" id="status5">[ PENDING ]</span>
+                    </div>
+                    <div class="step-content" id="content5"></div>
+                </div>
+            </div>
+
+            <!-- 加密结果 -->
+            <div class="result-section" id="encryptResult" style="display: none;">
+                <h3 class="result-title">⚡ ENCRYPTION COMPLETE - TRANSMIT DATA</h3>
+                
+                <div class="result-box">
+                    <div class="result-label">📦 ENCRYPTED_PAYLOAD (Send to recipient):</div>
+                    <textarea id="outputData" class="result-textarea" readonly></textarea>
+                    <button class="copy-btn" onclick="copyToClipboard('outputData')">COPY PAYLOAD</button>
+                </div>
+                
+                <div class="result-box">
+                    <div class="result-label">🔑 DECRYPTION_KEY (Transmit via secure channel):</div>
+                    <input type="text" id="outputKey" class="result-input" readonly>
+                    <button class="copy-btn" onclick="copyToClipboard('outputKey')">COPY KEY</button>
+                </div>
+                
+                <div class="instructions">
+                    <p>📋 TRANSMISSION PROTOCOL:</p>
+                    <ol>
+                        <li>Copy ENCRYPTED_PAYLOAD and send to recipient</li>
+                        <li>Transmit DECRYPTION_KEY via separate secure channel</li>
+                        <li>Recipient opens this terminal and selects DECRYPT mode</li>
+                        <li>Recipient inputs payload and key to decrypt message</li>
+                    </ol>
+                </div>
+            </div>
+
+
+        </div>
+    </div>
+
+    <script src="crypto.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
