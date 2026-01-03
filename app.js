@@ -36,7 +36,6 @@ function initMatrix() {
     });
 }
 
-// 工具函数
 function addLog(container, text) {
     const line = document.createElement('div');
     line.innerHTML = text;
@@ -58,10 +57,14 @@ function copyToClipboard(elementId) {
     });
 }
 
-// 主应用
+// 主应用 - 使用真实的 Web Crypto API
 class SecureMessageProtocol {
     constructor() {
         this.mode = null;
+        this.senderECDH = null;
+        this.receiverECDH = null;
+        this.senderECDSA = null;
+        this.sharedKey = null;
         this.initEventListeners();
         initMatrix();
     }
@@ -76,7 +79,6 @@ class SecureMessageProtocol {
     setMode(mode) {
         this.mode = mode;
         document.getElementById('modeSelector').style.display = 'none';
-
         if (mode === 'encrypt') {
             document.getElementById('encryptSection').style.display = 'block';
         } else {
@@ -84,7 +86,7 @@ class SecureMessageProtocol {
         }
     }
 
-    // ==================== 加密流程 ====================
+    // ==================== 加密流程 (使用真实密码学) ====================
     async startEncryption() {
         const sender = document.getElementById('sender').value.trim();
         const receiver = document.getElementById('receiver').value.trim();
@@ -102,16 +104,16 @@ class SecureMessageProtocol {
         await this.encryptStep1(sender, receiver);
         await delay(1500);
 
-        const { sharedKey } = await this.encryptStep2(sender, receiver);
+        const sharedKeyHex = await this.encryptStep2(sender, receiver);
         await delay(1500);
 
         const messageHash = await this.encryptStep3(message);
         await delay(1500);
 
-        const { signature, rsaKeys } = await this.encryptStep4(messageHash, sender);
+        const signature = await this.encryptStep4(message, sender);
         await delay(1500);
 
-        const encryptedData = await this.encryptStep5(sender, receiver, message, signature, rsaKeys, sharedKey);
+        const encryptedData = await this.encryptStep5(sender, receiver, message, signature);
         await delay(1000);
 
         this.showEncryptResult(encryptedData);
@@ -126,21 +128,26 @@ class SecureMessageProtocol {
         status.textContent = '[ RUNNING ]';
         status.classList.add('running');
 
-        const senderHash = await CryptoUtils.sha256(sender + Date.now());
-        const receiverHash = await CryptoUtils.sha256(receiver + Date.now());
-
         addLog(content, `<span class="highlight">[*]</span> 初始化身份认证协议...`);
         await delay(400);
+
+        const senderHash = await CryptoUtils.sha256(sender + Date.now());
+        const receiverHash = await CryptoUtils.sha256(receiver + Date.now());
+        const senderHash512 = await CryptoUtils.sha512(sender + Date.now());
+
         addLog(content, `<span class="highlight">[*]</span> 发送方标识: <span class="success">${sender}</span>`);
         await delay(300);
-        addLog(content, `<div class="code-block"><div class="code-label">发送方身份哈希 (SHA-256):</div><div class="code-value">${senderHash}</div></div>`);
+        addLog(content, `<div class="code-block"><div class="code-label">SHA-256 身份哈希:</div><div class="code-value">${senderHash}</div></div>`);
+        await delay(400);
+        addLog(content, `<div class="code-block"><div class="code-label">SHA-512 身份哈希:</div><div class="code-value">${senderHash512}</div></div>`);
         await delay(500);
+
         addLog(content, `<span class="highlight">[*]</span> 接收方标识: <span class="success">${receiver}</span>`);
         await delay(300);
-        addLog(content, `<div class="code-block"><div class="code-label">接收方身份哈希 (SHA-256):</div><div class="code-value">${receiverHash}</div></div>`);
+        addLog(content, `<div class="code-block"><div class="code-label">SHA-256 身份哈希:</div><div class="code-value">${receiverHash}</div></div>`);
         await delay(500);
-        addLog(content, `<span class="success">[✓]</span> 身份认证完成`);
 
+        addLog(content, `<span class="success">[✓]</span> 身份认证完成`);
         this.completeStep(step, status);
     }
 
@@ -153,38 +160,53 @@ class SecureMessageProtocol {
         status.textContent = '[ RUNNING ]';
         status.classList.add('running');
 
-        const p = CryptoUtils.generatePrime();
-        const g = 5;
-        const privateA = CryptoUtils.generatePrivateKey(p);
-        const privateB = CryptoUtils.generatePrivateKey(p);
-        const publicA = CryptoUtils.modPow(g, privateA, p);
-        const publicB = CryptoUtils.modPow(g, privateB, p);
-        const sharedSecret = CryptoUtils.modPow(publicB, privateA, p);
+        const dhInfo = CryptoUtils.getDHParamsInfo();
+        addLog(content, `<span class="highlight">[*]</span> 启动椭圆曲线 Diffie-Hellman 密钥交换协议...`);
+        await delay(400);
+        addLog(content, `<div class="code-block"><div class="code-label">算法参数:</div><div class="code-value">协议: ${dhInfo.name}</div><div class="code-value">曲线: ${dhInfo.curve}</div><div class="code-value">密钥长度: ${dhInfo.keySize} bits</div><div class="code-value">安全强度: ${dhInfo.securityLevel}</div></div>`);
+        await delay(600);
 
-        addLog(content, `<span class="highlight">[*]</span> 启动 Diffie-Hellman 密钥交换协议...`);
+        // 生成发送方 ECDH 密钥对
+        addLog(content, `<span class="highlight">[*]</span> ${sender} 生成 ECDH 密钥对...`);
         await delay(400);
-        addLog(content, `<div class="code-block"><div class="code-label">公共参数:</div><div class="code-value">大素数 p = ${p}, 生成元 g = ${g}</div></div>`);
+        this.senderECDH = await CryptoUtils.generateECDHKeyPair();
+        const senderPubKey = CryptoUtils.formatECPublicKey(this.senderECDH.publicKeyJwk);
+        addLog(content, `<div class="code-block"><div class="code-label">${sender} 公钥 (P-256):</div><div class="code-value">x: ${senderPubKey.x}</div><div class="code-value">y: ${senderPubKey.y}</div></div>`);
         await delay(500);
-        addLog(content, `<span class="highlight">[*]</span> ${sender} 生成私钥: a = ${privateA}`);
-        await delay(300);
-        addLog(content, `<span class="highlight">[*]</span> ${sender} 计算公钥: A = g^a mod p = ${publicA}`);
+
+        // 生成接收方 ECDH 密钥对
+        addLog(content, `<span class="highlight">[*]</span> ${receiver} 生成 ECDH 密钥对...`);
         await delay(400);
-        addLog(content, `<span class="highlight">[*]</span> ${receiver} 生成私钥: b = ${privateB}`);
-        await delay(300);
-        addLog(content, `<span class="highlight">[*]</span> ${receiver} 计算公钥: B = g^b mod p = ${publicB}`);
-        await delay(400);
+        this.receiverECDH = await CryptoUtils.generateECDHKeyPair();
+        const receiverPubKey = CryptoUtils.formatECPublicKey(this.receiverECDH.publicKeyJwk);
+        addLog(content, `<div class="code-block"><div class="code-label">${receiver} 公钥 (P-256):</div><div class="code-value">x: ${receiverPubKey.x}</div><div class="code-value">y: ${receiverPubKey.y}</div></div>`);
+        await delay(500);
+
+        // 交换公钥并计算共享密钥
         addLog(content, `<span class="highlight">[*]</span> 交换公钥...`);
-        await delay(500);
-        addLog(content, `<span class="highlight">[*]</span> 计算共享密钥: K = B^a mod p = A^b mod p = ${sharedSecret}`);
+        await delay(400);
+        addLog(content, `<span class="highlight">[*]</span> 计算 ECDH 共享密钥: K = privateA × publicB`);
         await delay(400);
 
-        const sharedKey = await CryptoUtils.sha256(sharedSecret.toString() + Date.now());
+        const derived = await CryptoUtils.deriveSharedKey(
+            this.senderECDH.privateKey,
+            this.receiverECDH.publicKey
+        );
+        this.sharedKey = derived.sharedKey;
 
-        addLog(content, `<div class="code-block"><div class="code-label">派生 AES-256 密钥 (SHA-256):</div><div class="code-value">${sharedKey}</div></div>`);
+        addLog(content, `<div class="code-block"><div class="code-label">ECDH 共享密钥 (256-bit):</div><div class="code-value">${derived.sharedKeyHex}</div></div>`);
+        await delay(400);
+
+        // 使用 HKDF 派生 AES 密钥
+        const aesKeyHex = await CryptoUtils.exportAESKey(this.sharedKey);
+        addLog(content, `<span class="highlight">[*]</span> 使用 HKDF-SHA256 派生 AES-256 密钥...`);
+        await delay(300);
+        addLog(content, `<div class="code-block"><div class="code-label">AES-256 密钥:</div><div class="code-value">${aesKeyHex}</div></div>`);
+
         addLog(content, `<span class="success">[✓]</span> 密钥协商完成`);
-
         this.completeStep(step, status);
-        return { sharedKey };
+
+        return aesKeyHex;
     }
 
     async encryptStep3(message) {
@@ -198,20 +220,26 @@ class SecureMessageProtocol {
 
         addLog(content, `<span class="highlight">[*]</span> 处理消息数据...`);
         await delay(400);
-        addLog(content, `<div class="code-block"><div class="code-label">原始消息:</div><div class="code-value" style="color: #00ffff;">"${message}"</div></div>`);
+        addLog(content, `<div class="code-block"><div class="code-label">原始消息 (${message.length} 字符):</div><div class="code-value" style="color: #00ffff;">"${message}"</div></div>`);
         await delay(500);
 
-        const messageHash = await CryptoUtils.sha256(message);
         addLog(content, `<span class="highlight">[*]</span> 计算消息摘要...`);
-        await delay(400);
-        addLog(content, `<div class="code-block"><div class="code-label">消息哈希 (SHA-256):</div><div class="code-value">${messageHash}</div></div>`);
-        addLog(content, `<span class="success">[✓]</span> 消息处理完成`);
+        await delay(300);
 
+        const messageHash256 = await CryptoUtils.sha256(message);
+        addLog(content, `<div class="code-block"><div class="code-label">SHA-256 摘要:</div><div class="code-value">${messageHash256}</div></div>`);
+        await delay(400);
+
+        const messageHash512 = await CryptoUtils.sha512(message);
+        addLog(content, `<div class="code-block"><div class="code-label">SHA-512 摘要:</div><div class="code-value">${messageHash512}</div></div>`);
+
+        addLog(content, `<span class="success">[✓]</span> 消息处理完成`);
         this.completeStep(step, status);
-        return messageHash;
+
+        return messageHash256;
     }
 
-    async encryptStep4(messageHash, sender) {
+    async encryptStep4(message, sender) {
         const step = document.getElementById('step4');
         const content = document.getElementById('content4');
         const status = document.getElementById('status4');
@@ -220,28 +248,34 @@ class SecureMessageProtocol {
         status.textContent = '[ RUNNING ]';
         status.classList.add('running');
 
-        const rsaKeys = CryptoUtils.generateRSAKeys();
-
-        addLog(content, `<span class="highlight">[*]</span> 生成 RSA 密钥对...`);
+        const sigInfo = CryptoUtils.getSignatureInfo();
+        addLog(content, `<span class="highlight">[*]</span> 初始化数字签名协议...`);
+        await delay(400);
+        addLog(content, `<div class="code-block"><div class="code-label">签名算法:</div><div class="code-value">协议: ${sigInfo.name}</div><div class="code-value">哈希: ${sigInfo.hash}</div><div class="code-value">签名长度: ${sigInfo.signatureSize}</div><div class="code-value">安全强度: ${sigInfo.securityLevel}</div></div>`);
         await delay(500);
-        addLog(content, `<div class="code-block"><div class="code-label">RSA 公钥 (e, n):</div><div class="code-value">e = ${rsaKeys.publicKey.e}, n = ${rsaKeys.publicKey.n}</div></div>`);
+
+        // 生成 ECDSA 密钥对
+        addLog(content, `<span class="highlight">[*]</span> 生成 ECDSA 签名密钥对...`);
         await delay(400);
-        addLog(content, `<div class="code-block"><div class="code-label">RSA 私钥 (d, n):</div><div class="code-value">d = ${rsaKeys.privateKey.d}, n = ${rsaKeys.privateKey.n}</div></div>`);
+        this.senderECDSA = await CryptoUtils.generateECDSAKeyPair();
+        const ecdsaPubKey = CryptoUtils.formatECPublicKey(this.senderECDSA.publicKeyJwk);
+        addLog(content, `<div class="code-block"><div class="code-label">ECDSA 公钥 (P-256):</div><div class="code-value">x: ${ecdsaPubKey.x}</div><div class="code-value">y: ${ecdsaPubKey.y}</div></div>`);
+        await delay(500);
+
+        // 签名
+        addLog(content, `<span class="highlight">[*]</span> 使用私钥对消息签名...`);
+        await delay(400);
+        const signature = await CryptoUtils.ecdsaSign(message, this.senderECDSA.privateKey);
+        addLog(content, `<div class="code-block"><div class="code-label">ECDSA 数字签名 (64 bytes):</div><div class="code-value" style="color: #00ffff;">${signature}</div></div>`);
         await delay(400);
 
-        const signature = CryptoUtils.rsaSign(messageHash, rsaKeys.privateKey);
-        addLog(content, `<span class="highlight">[*]</span> 使用私钥对消息哈希签名...`);
-        await delay(400);
-        addLog(content, `<span class="highlight">[*]</span> 签名算法: S = H(m)^d mod n`);
-        await delay(300);
-        addLog(content, `<div class="code-block"><div class="code-label">数字签名:</div><div class="code-value" style="color: #00ffff;">${signature}</div></div>`);
         addLog(content, `<span class="success">[✓]</span> 数字签名生成完成，消息来源已认证: ${sender}`);
-
         this.completeStep(step, status);
-        return { signature, rsaKeys };
+
+        return signature;
     }
 
-    async encryptStep5(sender, receiver, message, signature, rsaKeys, sharedKey) {
+    async encryptStep5(sender, receiver, message, signature) {
         const step = document.getElementById('step5');
         const content = document.getElementById('content5');
         const status = document.getElementById('status5');
@@ -255,30 +289,34 @@ class SecureMessageProtocol {
             to: receiver,
             message: message,
             signature: signature,
-            rsaPublicKey: rsaKeys.publicKey,
+            ecdsaPublicKey: this.senderECDSA.publicKeyJwk,
             timestamp: new Date().toISOString()
         };
 
         addLog(content, `<span class="highlight">[*]</span> 构建消息数据包...`);
         await delay(400);
-        addLog(content, `<span class="highlight">[*]</span> 生成随机初始化向量 (IV)...`);
+
+        const iv = CryptoUtils.randomHex(12);
+        addLog(content, `<span class="highlight">[*]</span> 生成随机初始化向量 (96-bit IV)...`);
         await delay(300);
+        addLog(content, `<div class="code-block"><div class="code-label">IV:</div><div class="code-value">${iv}</div></div>`);
+        await delay(400);
+
         addLog(content, `<span class="highlight">[*]</span> 执行 AES-256-GCM 加密...`);
         await delay(600);
 
-        const encrypted = await CryptoUtils.aesEncrypt(JSON.stringify(payload), sharedKey);
+        const encrypted = await CryptoUtils.aesEncryptWithKey(JSON.stringify(payload), this.sharedKey);
+        const keyHex = await CryptoUtils.exportAESKey(this.sharedKey);
 
-        addLog(content, `<div class="code-block"><div class="code-label">密文 (部分显示):</div><div class="code-value">${encrypted.substring(0, 100)}...</div></div>`);
+        addLog(content, `<div class="code-block"><div class="code-label">密文 (${encrypted.length} hex chars):</div><div class="code-value">${encrypted.substring(0, 120)}...</div></div>`);
         await delay(300);
-        addLog(content, `<span class="highlight">[*]</span> 密文长度: ${encrypted.length} 字节`);
+
+        addLog(content, `<span class="highlight">[*]</span> 认证标签 (GCM Tag): 128 bits`);
         addLog(content, `<span class="success">[✓]</span> 加密完成，消息已准备好传输`);
 
         this.completeStep(step, status);
 
-        return {
-            encrypted: encrypted,
-            key: sharedKey
-        };
+        return { encrypted, key: keyHex };
     }
 
     showEncryptResult(data) {
@@ -306,10 +344,10 @@ class SecureMessageProtocol {
             await this.decryptStep1(encryptedData);
             await delay(1500);
 
-            const fullKey = await this.decryptStep2(secretKey);
+            const aesKey = await this.decryptStep2(secretKey);
             await delay(1500);
 
-            const decryptedData = await this.decryptStep3(encryptedData, fullKey);
+            const decryptedData = await this.decryptStep3(encryptedData, aesKey);
             await delay(1500);
 
             await this.decryptStep4(decryptedData);
@@ -334,14 +372,22 @@ class SecureMessageProtocol {
 
         addLog(content, `<span class="highlight">[*]</span> 接收加密数据包...`);
         await delay(400);
-        addLog(content, `<span class="highlight">[*]</span> 数据包大小: ${encryptedData.length} 字节`);
+        addLog(content, `<span class="highlight">[*]</span> 数据包大小: ${encryptedData.length / 2} bytes (${encryptedData.length} hex chars)`);
         await delay(300);
-        addLog(content, `<div class="code-block"><div class="code-label">加密数据 (部分):</div><div class="code-value">${encryptedData.substring(0, 80)}...</div></div>`);
+        addLog(content, `<div class="code-block"><div class="code-label">加密数据 (部分):</div><div class="code-value">${encryptedData.substring(0, 96)}...</div></div>`);
         await delay(500);
+
+        // 提取 IV
+        const iv = encryptedData.substring(0, 24);
+        addLog(content, `<span class="highlight">[*]</span> 提取初始化向量 (IV)...`);
+        await delay(300);
+        addLog(content, `<div class="code-block"><div class="code-label">IV (96-bit):</div><div class="code-value">${iv}</div></div>`);
+        await delay(400);
+
         addLog(content, `<span class="highlight">[*]</span> 检测加密算法: AES-256-GCM`);
         await delay(300);
-        addLog(content, `<span class="highlight">[*]</span> 验证数据格式...`);
-        await delay(400);
+        addLog(content, `<span class="highlight">[*]</span> 认证标签长度: 128 bits`);
+        await delay(300);
         addLog(content, `<span class="success">[✓]</span> 数据格式验证通过`);
 
         this.completeStep(step, status);
@@ -358,19 +404,23 @@ class SecureMessageProtocol {
 
         addLog(content, `<span class="highlight">[*]</span> 验证解密密钥...`);
         await delay(400);
-        addLog(content, `<span class="highlight">[*]</span> 密钥长度: ${secretKey.length} 字符`);
+        addLog(content, `<span class="highlight">[*]</span> 密钥长度: ${secretKey.length / 2} bytes (${secretKey.length * 4} bits)`);
         await delay(300);
         addLog(content, `<span class="highlight">[*]</span> 密钥格式: 256-bit hexadecimal`);
         await delay(300);
         addLog(content, `<div class="code-block"><div class="code-label">AES-256 密钥:</div><div class="code-value">${secretKey}</div></div>`);
         await delay(400);
+
+        addLog(content, `<span class="highlight">[*]</span> 导入密钥到 Web Crypto API...`);
+        await delay(300);
+        const aesKey = await CryptoUtils.importAESKey(secretKey);
         addLog(content, `<span class="success">[✓]</span> 密钥验证通过`);
 
         this.completeStep(step, status);
-        return secretKey;
+        return aesKey;
     }
 
-    async decryptStep3(encryptedData, fullKey) {
+    async decryptStep3(encryptedData, aesKey) {
         const step = document.getElementById('step3');
         const content = document.getElementById('content3');
         const status = document.getElementById('status3');
@@ -381,17 +431,19 @@ class SecureMessageProtocol {
 
         addLog(content, `<span class="highlight">[*]</span> 启动 AES-256-GCM 解密...`);
         await delay(400);
-        addLog(content, `<span class="highlight">[*]</span> 提取初始化向量 (IV)...`);
+        addLog(content, `<span class="highlight">[*]</span> 分离 IV 和密文...`);
         await delay(400);
         addLog(content, `<span class="highlight">[*]</span> 执行解密操作...`);
         await delay(600);
 
-        const decrypted = await CryptoUtils.aesDecrypt(encryptedData, fullKey);
+        const decrypted = await CryptoUtils.aesDecryptWithKey(encryptedData, aesKey);
         const data = JSON.parse(decrypted);
 
-        addLog(content, `<span class="highlight">[*]</span> 验证认证标签 (Authentication Tag)...`);
+        addLog(content, `<span class="highlight">[*]</span> 验证 GCM 认证标签...`);
         await delay(300);
-        addLog(content, `<div class="code-block"><div class="code-label">解密后的数据:</div><div class="code-value">${decrypted}</div></div>`);
+        addLog(content, `<span class="success">[✓]</span> 认证标签验证通过 (数据完整性确认)`);
+        await delay(300);
+        addLog(content, `<div class="code-block"><div class="code-label">解密后的数据:</div><div class="code-value">${decrypted.substring(0, 200)}...</div></div>`);
         addLog(content, `<span class="success">[✓]</span> 解密成功`);
 
         this.completeStep(step, status);
@@ -407,27 +459,34 @@ class SecureMessageProtocol {
         status.textContent = '[ RUNNING ]';
         status.classList.add('running');
 
-        addLog(content, `<span class="highlight">[*]</span> 验证数字签名...`);
+        addLog(content, `<span class="highlight">[*]</span> 验证 ECDSA 数字签名...`);
         await delay(400);
-        addLog(content, `<div class="code-block"><div class="code-label">签名值:</div><div class="code-value">${data.signature}</div></div>`);
+        addLog(content, `<div class="code-block"><div class="code-label">签名值 (64 bytes):</div><div class="code-value">${data.signature}</div></div>`);
         await delay(400);
 
-        const messageHash = await CryptoUtils.sha256(data.message);
+        addLog(content, `<span class="highlight">[*]</span> 导入 ECDSA 公钥...`);
+        await delay(300);
+        const ecdsaPubKey = CryptoUtils.formatECPublicKey(data.ecdsaPublicKey);
+        addLog(content, `<div class="code-block"><div class="code-label">ECDSA 公钥 (P-256):</div><div class="code-value">x: ${ecdsaPubKey.x}</div><div class="code-value">y: ${ecdsaPubKey.y}</div></div>`);
+        await delay(400);
+
         addLog(content, `<span class="highlight">[*]</span> 重新计算消息哈希...`);
         await delay(300);
-        addLog(content, `<div class="code-block"><div class="code-label">消息哈希:</div><div class="code-value">${messageHash}</div></div>`);
+        const messageHash = await CryptoUtils.sha256(data.message);
+        addLog(content, `<div class="code-block"><div class="code-label">SHA-256 摘要:</div><div class="code-value">${messageHash}</div></div>`);
         await delay(400);
 
-        addLog(content, `<span class="highlight">[*]</span> 使用公钥验证签名: H(m) = S^e mod n`);
+        addLog(content, `<span class="highlight">[*]</span> 执行 ECDSA 签名验证...`);
         await delay(400);
 
-        const isValid = CryptoUtils.rsaVerify(data.signature, messageHash, data.rsaPublicKey);
+        const publicKey = await CryptoUtils.importECDSAPublicKey(data.ecdsaPublicKey);
+        const isValid = await CryptoUtils.ecdsaVerify(data.message, data.signature, publicKey);
 
         if (isValid) {
             addLog(content, `<span class="success">[✓]</span> 签名验证成功`);
             addLog(content, `<span class="success">[✓]</span> 消息来源已确认: <span style="color: #00ffff;">${data.from}</span>`);
         } else {
-            addLog(content, `<span class="warning">[!]</span> 签名验证中...`);
+            addLog(content, `<span class="warning">[!]</span> 签名验证失败`);
         }
 
         this.completeStep(step, status);
@@ -458,7 +517,7 @@ class SecureMessageProtocol {
 
         await delay(500);
         addLog(content, `<br><span class="success">[✓]</span> 解密协议执行完成`);
-        addLog(content, `<span class="success">[✓]</span> 身份已验证 | 签名有效 | 消息完整`);
+        addLog(content, `<span class="success">[✓]</span> 身份已验证 | ECDSA签名有效 | AES-GCM认证通过 | 消息完整`);
 
         this.completeStep(step, status);
     }

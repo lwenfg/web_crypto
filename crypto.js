@@ -1,37 +1,16 @@
-// 密码学工具类
+/**
+ * 密码学工具类 - 使用 Web Crypto API 实现真实的密码学操作
+ * 
+ * 包含:
+ * - ECDH (Elliptic Curve Diffie-Hellman) 密钥交换 - P-256曲线
+ * - ECDSA (Elliptic Curve Digital Signature Algorithm) 数字签名
+ * - AES-256-GCM 对称加密
+ * - SHA-256/SHA-512 哈希
+ */
 class CryptoUtils {
-    // 生成大素数 (简化版，实际应用需要更大的素数)
-    static generatePrime() {
-        const primes = [
-            104729, 104743, 104759, 104761, 104773,
-            104779, 104789, 104801, 104803, 104827
-        ];
-        return primes[Math.floor(Math.random() * primes.length)];
-    }
-
-    // 模幂运算
-    static modPow(base, exp, mod) {
-        let result = BigInt(1);
-        base = BigInt(base) % BigInt(mod);
-        exp = BigInt(exp);
-        mod = BigInt(mod);
-        
-        while (exp > 0n) {
-            if (exp % 2n === 1n) {
-                result = (result * base) % mod;
-            }
-            exp = exp / 2n;
-            base = (base * base) % mod;
-        }
-        return Number(result);
-    }
-
-    // 生成随机私钥
-    static generatePrivateKey(max) {
-        return Math.floor(Math.random() * (max - 2)) + 2;
-    }
-
-    // SHA-256 哈希
+    
+    // ==================== 哈希函数 ====================
+    
     static async sha256(message) {
         const encoder = new TextEncoder();
         const data = encoder.encode(message);
@@ -40,69 +19,129 @@ class CryptoUtils {
         return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     }
 
-    // 简化的RSA密钥生成
-    static generateRSAKeys() {
-        // 使用较小的素数进行演示
-        const p = 61;
-        const q = 53;
-        const n = p * q; // 3233
-        const phi = (p - 1) * (q - 1); // 3120
-        const e = 17; // 公钥指数
-        
-        // 计算私钥 d (e * d ≡ 1 mod phi)
-        let d = 1;
-        while ((e * d) % phi !== 1) {
-            d++;
-        }
-        // d = 2753
+    static async sha512(message) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(message);
+        const hashBuffer = await crypto.subtle.digest('SHA-512', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // ==================== ECDH 密钥交换 (P-256曲线) ====================
+    
+    static async generateECDHKeyPair() {
+        const keyPair = await crypto.subtle.generateKey(
+            { name: 'ECDH', namedCurve: 'P-256' },
+            true,
+            ['deriveKey', 'deriveBits']
+        );
+        const publicKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+        const privateKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
         
         return {
-            publicKey: { e, n },
-            privateKey: { d, n }
+            publicKey: keyPair.publicKey,
+            privateKey: keyPair.privateKey,
+            publicKeyJwk,
+            privateKeyJwk
         };
     }
 
-    // RSA签名 (简化版)
-    static rsaSign(messageHash, privateKey) {
-        // 取哈希的前几位作为数字
-        const hashNum = parseInt(messageHash.substring(0, 4), 16) % privateKey.n;
-        return this.modPow(hashNum, privateKey.d, privateKey.n);
-    }
-
-    // RSA验签
-    static rsaVerify(signature, messageHash, publicKey) {
-        const hashNum = parseInt(messageHash.substring(0, 4), 16) % publicKey.n;
-        const decrypted = this.modPow(signature, publicKey.e, publicKey.n);
-        return decrypted === hashNum;
-    }
-
-    // AES加密 (使用Web Crypto API)
-    static async aesEncrypt(plaintext, keyHex) {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(plaintext);
-        
-        // 从hex字符串生成密钥
-        const keyBytes = new Uint8Array(32);
-        for (let i = 0; i < 32; i++) {
-            keyBytes[i] = parseInt(keyHex.substr(i * 2, 2), 16) || 0;
-        }
-        
-        const key = await crypto.subtle.importKey(
-            'raw',
-            keyBytes,
-            { name: 'AES-GCM' },
-            false,
-            ['encrypt']
+    static async deriveSharedKey(privateKey, publicKey) {
+        const sharedBits = await crypto.subtle.deriveBits(
+            { name: 'ECDH', public: publicKey },
+            privateKey,
+            256
         );
         
-        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const sharedKeyHex = Array.from(new Uint8Array(sharedBits))
+            .map(b => b.toString(16).padStart(2, '0')).join('');
+        
+        // 使用 HKDF 派生 AES 密钥
+        const keyMaterial = await crypto.subtle.importKey(
+            'raw', sharedBits, { name: 'HKDF' }, false, ['deriveKey']
+        );
+        
+        const aesKey = await crypto.subtle.deriveKey(
+            {
+                name: 'HKDF',
+                hash: 'SHA-256',
+                salt: new TextEncoder().encode('secure-msg-protocol'),
+                info: new TextEncoder().encode('aes-256-gcm-key')
+            },
+            keyMaterial,
+            { name: 'AES-GCM', length: 256 },
+            true,
+            ['encrypt', 'decrypt']
+        );
+        
+        return { sharedKey: aesKey, sharedKeyHex };
+    }
+
+    static async importECDHPublicKey(jwk) {
+        return await crypto.subtle.importKey(
+            'jwk', jwk, { name: 'ECDH', namedCurve: 'P-256' }, true, []
+        );
+    }
+
+    // ==================== ECDSA 数字签名 (P-256曲线) ====================
+    
+    static async generateECDSAKeyPair() {
+        const keyPair = await crypto.subtle.generateKey(
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            true,
+            ['sign', 'verify']
+        );
+        const publicKeyJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+        
+        return {
+            publicKey: keyPair.publicKey,
+            privateKey: keyPair.privateKey,
+            publicKeyJwk
+        };
+    }
+
+    static async ecdsaSign(message, privateKey) {
+        const data = new TextEncoder().encode(message);
+        const signature = await crypto.subtle.sign(
+            { name: 'ECDSA', hash: { name: 'SHA-256' } },
+            privateKey,
+            data
+        );
+        return Array.from(new Uint8Array(signature))
+            .map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    static async ecdsaVerify(message, signatureHex, publicKey) {
+        const data = new TextEncoder().encode(message);
+        const signature = new Uint8Array(
+            signatureHex.match(/.{2}/g).map(byte => parseInt(byte, 16))
+        );
+        return await crypto.subtle.verify(
+            { name: 'ECDSA', hash: { name: 'SHA-256' } },
+            publicKey,
+            signature,
+            data
+        );
+    }
+
+    static async importECDSAPublicKey(jwk) {
+        return await crypto.subtle.importKey(
+            'jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify']
+        );
+    }
+
+    // ==================== AES-256-GCM 加密 ====================
+    
+    static async aesEncryptWithKey(plaintext, key) {
+        const data = new TextEncoder().encode(plaintext);
+        const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV
+        
         const encrypted = await crypto.subtle.encrypt(
-            { name: 'AES-GCM', iv },
+            { name: 'AES-GCM', iv, tagLength: 128 },
             key,
             data
         );
         
-        // 合并IV和密文
         const combined = new Uint8Array(iv.length + encrypted.byteLength);
         combined.set(iv);
         combined.set(new Uint8Array(encrypted), iv.length);
@@ -110,30 +149,15 @@ class CryptoUtils {
         return Array.from(combined).map(b => b.toString(16).padStart(2, '0')).join('');
     }
 
-    // AES解密
-    static async aesDecrypt(ciphertextHex, keyHex) {
-        // 从hex转换回字节
-        const combined = new Uint8Array(ciphertextHex.match(/.{2}/g).map(byte => parseInt(byte, 16)));
-        
+    static async aesDecryptWithKey(ciphertextHex, key) {
+        const combined = new Uint8Array(
+            ciphertextHex.match(/.{2}/g).map(byte => parseInt(byte, 16))
+        );
         const iv = combined.slice(0, 12);
         const ciphertext = combined.slice(12);
         
-        // 从hex字符串生成密钥
-        const keyBytes = new Uint8Array(32);
-        for (let i = 0; i < 32; i++) {
-            keyBytes[i] = parseInt(keyHex.substr(i * 2, 2), 16) || 0;
-        }
-        
-        const key = await crypto.subtle.importKey(
-            'raw',
-            keyBytes,
-            { name: 'AES-GCM' },
-            false,
-            ['decrypt']
-        );
-        
         const decrypted = await crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv },
+            { name: 'AES-GCM', iv, tagLength: 128 },
             key,
             ciphertext
         );
@@ -141,9 +165,53 @@ class CryptoUtils {
         return new TextDecoder().decode(decrypted);
     }
 
-    // 生成随机十六进制字符串
-    static randomHex(length) {
-        const bytes = crypto.getRandomValues(new Uint8Array(length / 2));
+    static async importAESKey(keyHex) {
+        const keyBytes = new Uint8Array(
+            keyHex.match(/.{2}/g).map(byte => parseInt(byte, 16))
+        );
+        return await crypto.subtle.importKey(
+            'raw', keyBytes, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']
+        );
+    }
+
+    static async exportAESKey(key) {
+        const exported = await crypto.subtle.exportKey('raw', key);
+        return Array.from(new Uint8Array(exported))
+            .map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // ==================== 工具函数 ====================
+    
+    static randomHex(byteLength) {
+        const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
         return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    static formatECPublicKey(jwk) {
+        return {
+            curve: jwk.crv,
+            x: jwk.x,
+            y: jwk.y
+        };
+    }
+
+    // 获取 DH 参数信息 (用于显示)
+    static getDHParamsInfo() {
+        return {
+            name: 'ECDH with P-256 (secp256r1)',
+            curve: 'NIST P-256',
+            keySize: 256,
+            securityLevel: '128-bit equivalent'
+        };
+    }
+
+    // 获取签名算法信息 (用于显示)
+    static getSignatureInfo() {
+        return {
+            name: 'ECDSA with P-256',
+            hash: 'SHA-256',
+            signatureSize: '64 bytes (512 bits)',
+            securityLevel: '128-bit equivalent'
+        };
     }
 }
